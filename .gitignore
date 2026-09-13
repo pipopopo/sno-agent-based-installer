@@ -1,0 +1,8 @@
+output/
+vars/cluster-config.yml
+files/pull-secret.json
+files/mirror-ca.crt
+*.iso
+auth/
+.bootstrap/
+*.pdf

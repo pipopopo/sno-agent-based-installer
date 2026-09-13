@@ -1,0 +1,37 @@
+apiVersion: v1beta1
+kind: AgentConfig
+metadata:
+  name: {{ cluster_name }}
+rendezvousIP: {{ node_ip }}
+hosts:
+- hostname: {{ node_hostname }}
+  role: master
+  interfaces:
+  - name: {{ interface_name }}
+    macAddress: {{ mac_address }}
+{% if root_device is defined %}
+  rootDeviceHints:
+    deviceName: "{{ root_device }}"
+{% endif %}
+  networkConfig:
+    interfaces:
+    - name: {{ interface_name }}
+      type: ethernet
+      state: up
+      mac-address: {{ mac_address }}
+      ipv4:
+        enabled: true
+        address:
+        - ip: {{ node_ip }}
+          prefix-length: {{ prefix_length }}
+        dhcp: false
+    dns-resolver:
+      config:
+        server:
+        - {{ dns_server }}
+    routes:
+      config:
+      - destination: 0.0.0.0/0
+        next-hop-address: {{ gateway }}
+        next-hop-interface: {{ interface_name }}
+        table-id: 254

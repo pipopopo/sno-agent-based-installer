@@ -1,0 +1,120 @@
+---
+- name: Generate OpenShift SNO Agent-Based Installer ISO (Disconnected)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - vars/cluster-config.yml
+
+  pre_tasks:
+    - name: Verify openshift-install is available
+      ansible.builtin.command: openshift-install version
+      changed_when: false
+      register: ocp_installer_version
+
+    - name: Show installer version
+      ansible.builtin.debug:
+        var: ocp_installer_version.stdout_lines
+
+    - name: Read pull secret
+      ansible.builtin.slurp:
+        src: "{{ pull_secret_file }}"
+      register: pull_secret_raw
+
+    - name: Set pull secret fact
+      ansible.builtin.set_fact:
+        pull_secret: "{{ pull_secret_raw.content | b64decode | trim }}"
+
+    - name: Read SSH public key
+      ansible.builtin.slurp:
+        src: "{{ ssh_key_file }}"
+      register: ssh_key_raw
+
+    - name: Set SSH key fact
+      ansible.builtin.set_fact:
+        ssh_key: "{{ ssh_key_raw.content | b64decode | trim }}"
+
+    - name: Read mirror registry CA certificate
+      ansible.builtin.slurp:
+        src: "{{ mirror_registry_ca_file }}"
+      register: mirror_ca_raw
+
+    - name: Set mirror CA fact
+      ansible.builtin.set_fact:
+        mirror_ca: "{{ mirror_ca_raw.content | b64decode }}"
+
+  tasks:
+    - name: Clean previous install directory
+      ansible.builtin.file:
+        path: "{{ install_dir }}"
+        state: absent
+
+    - name: Create install directory
+      ansible.builtin.file:
+        path: "{{ install_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Template install-config.yaml
+      ansible.builtin.template:
+        src: templates/install-config.yaml.j2
+        dest: "{{ install_dir }}/install-config.yaml"
+        mode: "0644"
+
+    - name: Template agent-config.yaml
+      ansible.builtin.template:
+        src: templates/agent-config.yaml.j2
+        dest: "{{ install_dir }}/agent-config.yaml"
+        mode: "0644"
+
+    - name: Display generated install-config.yaml
+      ansible.builtin.command: cat {{ install_dir }}/install-config.yaml
+      changed_when: false
+      register: install_config_content
+
+    - name: Show install-config.yaml (verify before ISO generation)
+      ansible.builtin.debug:
+        var: install_config_content.stdout_lines
+
+    - name: Display generated agent-config.yaml
+      ansible.builtin.command: cat {{ install_dir }}/agent-config.yaml
+      changed_when: false
+      register: agent_config_content
+
+    - name: Show agent-config.yaml (verify before ISO generation)
+      ansible.builtin.debug:
+        var: agent_config_content.stdout_lines
+
+    - name: Generate agent ISO image
+      ansible.builtin.command:
+        cmd: openshift-install --dir {{ install_dir }} agent create image
+      register: iso_result
+
+    - name: Show ISO generation output
+      ansible.builtin.debug:
+        var: iso_result.stderr_lines
+
+    - name: Find generated ISO
+      ansible.builtin.find:
+        paths: "{{ install_dir }}"
+        patterns: "*.iso"
+      register: iso_files
+
+    - name: Display ISO location
+      ansible.builtin.debug:
+        msg: "Agent ISO generated: {{ item.path }} ({{ (item.size / 1048576) | round(1) }} MB)"
+      loop: "{{ iso_files.files }}"
+
+    - name: Post-install instructions
+      ansible.builtin.debug:
+        msg:
+          - "=== Next Steps ==="
+          - "1. Boot the target machine from: {{ iso_files.files[0].path | default('the generated ISO') }}"
+          - "2. Ensure DNS records exist:"
+          - "   api.{{ cluster_name }}.{{ base_domain }}    -> {{ node_ip }}"
+          - "   api-int.{{ cluster_name }}.{{ base_domain }} -> {{ node_ip }}"
+          - "   *.apps.{{ cluster_name }}.{{ base_domain }}  -> {{ node_ip }}"
+          - "3. Monitor bootstrap: openshift-install --dir {{ install_dir }} agent wait-for bootstrap-complete --log-level=info"
+          - "4. Monitor install:   openshift-install --dir {{ install_dir }} agent wait-for install-complete"
+          - "5. Kubeconfig will be at: {{ install_dir }}/auth/kubeconfig"

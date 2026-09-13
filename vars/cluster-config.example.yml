@@ -1,0 +1,54 @@
+---
+# =============================================================================
+# OpenShift SNO Agent-Based Installer - Disconnected Configuration
+# =============================================================================
+# Copy this file to cluster-config.yml and fill in your values.
+# All fields are required unless marked (optional).
+
+# --- Cluster Identity ---
+cluster_name: my-cluster
+base_domain: example.com
+ocp_version: "4.18"
+
+# --- Node Network ---
+node_hostname: master-0
+node_ip: 192.168.1.100
+prefix_length: 24
+gateway: 192.168.1.1
+dns_server: 192.168.1.1
+interface_name: enp1s0
+mac_address: "aa:bb:cc:dd:ee:ff"
+machine_network_cidr: 192.168.1.0/24
+
+# --- Disk ---
+# (optional) Root device hint - set to target install disk
+# Uses deviceName by default. Other options: model, vendor, serialNumber
+root_device: /dev/sda
+
+# --- Cluster Networking ---
+cluster_network_cidr: 10.128.0.0/14
+cluster_network_host_prefix: 23
+service_network_cidr: 172.30.0.0/16
+
+# --- Authentication ---
+# Path to your pull secret JSON file (from console.redhat.com/openshift/downloads)
+pull_secret_file: files/pull-secret.json
+
+# Path to your SSH public key file
+ssh_key_file: ~/.ssh/id_ed25519.pub
+
+# --- Mirror Registry (Disconnected) ---
+mirror_registry: registry.example.com:5000
+mirror_registry_ca_file: files/mirror-ca.crt
+
+# imageContentSources - from `oc adm release mirror` output
+image_content_sources:
+  - mirrors:
+      - registry.example.com:5000/openshift/release
+    source: quay.io/openshift-release-dev/ocp-release
+  - mirrors:
+      - registry.example.com:5000/openshift/release
+    source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+
+# --- Output ---
+install_dir: "{{ playbook_dir }}/output/{{ cluster_name }}"
