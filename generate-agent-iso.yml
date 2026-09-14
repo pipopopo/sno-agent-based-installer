@@ -68,6 +68,40 @@
         dest: "{{ install_dir }}/agent-config.yaml"
         mode: "0644"
 
+    - name: Create openshift manifests directory
+      ansible.builtin.file:
+        path: "{{ install_dir }}/openshift"
+        state: directory
+        mode: "0755"
+
+    - name: Collect unique mirror registries
+      ansible.builtin.set_fact:
+        mirror_registries: "{{ image_content_sources | map(attribute='mirrors') | flatten | unique }}"
+
+    - name: Build mirror registry docker policy entries
+      ansible.builtin.set_fact:
+        mirror_docker_policy: "{{ mirror_docker_policy | default({}) | combine({item: [{'type': 'insecureAcceptAnything'}]}) }}"
+      loop: "{{ mirror_registries }}"
+
+    - name: Build and encode mirror signature policy
+      ansible.builtin.set_fact:
+        mirror_signature_policy_b64: "{{ policy | to_json | b64encode }}"
+      vars:
+        policy:
+          default:
+            - type: insecureAcceptAnything
+          transports:
+            docker: "{{ mirror_docker_policy }}"
+            docker-daemon:
+              "":
+                - type: insecureAcceptAnything
+
+    - name: Template mirror signature policy MachineConfig
+      ansible.builtin.template:
+        src: templates/99-mirror-signature-policy.yaml.j2
+        dest: "{{ install_dir }}/openshift/99-mirror-signature-policy.yaml"
+        mode: "0644"
+
     - name: Display generated install-config.yaml
       ansible.builtin.command: cat {{ install_dir }}/install-config.yaml
       changed_when: false

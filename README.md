@@ -31,12 +31,14 @@ The agent-based installer is fully CLI-driven — no web UI or external services
 
 **How it works:**
 
-1. The playbook templates `install-config.yaml` and `agent-config.yaml` from your variables
-2. `openshift-install agent create image` generates a bootable ISO (~1.3 GB)
+1. The playbook templates `install-config.yaml`, `agent-config.yaml`, and a MachineConfig for mirror registry signature policy from your variables
+2. `openshift-install agent create image` generates a bootable ISO (~1.3 GB), consuming extra manifests from the `openshift/` directory
 3. Boot the target machine from the ISO
 4. The embedded agent writes RHCOS to disk, reboots, and bootstraps the cluster
 5. The cluster pulls OCP container images from the mirror registry during installation
 6. After ~30 minutes, a fully operational single-node OpenShift cluster is running
+
+**Tested with:** OCP 4.18 and 4.22 (disconnected SNO)
 
 ## Prerequisites
 
@@ -53,7 +55,7 @@ The agent-based installer is fully CLI-driven — no web UI or external services
 Download from the [OpenShift mirror](https://mirror.openshift.com/pub/openshift-v4/clients/ocp/):
 
 ```bash
-OCP_VERSION="4.18.54"
+OCP_VERSION="4.22.12"   # or your target version
 curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OCP_VERSION}/openshift-install-linux.tar.gz | sudo tar xz -C /usr/local/bin/
 curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OCP_VERSION}/openshift-client-linux.tar.gz | sudo tar xz -C /usr/local/bin/
 sudo dnf install -y nmstate   # RHEL/Fedora
@@ -147,17 +149,18 @@ sudo podman run -d --name mirror-registry \
 ### 2. Mirror the OCP release
 
 ```bash
-OCP_VERSION="4.18.54"
+OCP_VERSION="4.22.12"   # or your target version
 REGISTRY="registry.example.com:5000"
 
 oc adm release mirror \
+  -a /path/to/pull-secret.json \
   --from=quay.io/openshift-release-dev/ocp-release:${OCP_VERSION}-x86_64 \
   --to=${REGISTRY}/openshift/release \
   --to-release-image=${REGISTRY}/openshift/release:${OCP_VERSION}-x86_64 \
   --insecure=true
 ```
 
-This takes 15-30 minutes and downloads ~19 GB of images. The command output includes the `imageContentSources` block to copy into your `cluster-config.yml`.
+The `-a` flag points to your pull secret containing auth for both `quay.io` and your mirror registry. This takes 15-30 minutes and downloads ~19 GB of images. The command output includes the `imageContentSources` / `imageDigestSources` block to copy into your `cluster-config.yml`.
 
 ### 3. Copy the CA certificate
 
@@ -182,6 +185,23 @@ echo "$PULL_SECRET" | jq --arg reg "$REGISTRY" \
 ```
 
 If your registry requires real credentials, replace `unused:unused` with `username:password`.
+
+## OCP 4.22+ Signature Policy (Disconnected)
+
+Starting with OCP 4.22, RHCOS enforces sigstore signature verification for container images pulled from `quay.io` via `/etc/containers/policy.json`. In a disconnected install, mirrored images do not carry these signatures, which causes CRI-O and kubelet to reject them with:
+
+```
+Source image rejected: A signature was required, but no signature exists
+```
+
+The playbook automatically generates a MachineConfig (`99-mirror-signature-policy`) that overrides `policy.json` to accept unsigned images from your mirror registry. This MachineConfig is placed in the `openshift/` directory and consumed by `openshift-install agent create image` as an extra manifest.
+
+**Key details:**
+- The policy is built dynamically from your `image_content_sources` mirror entries
+- Manifests must be in the `openshift/` directory (not `cluster-manifests/`) to be consumed
+- The install-config template automatically uses `imageDigestSources` (4.14+) or `imageContentSources` (older) based on your `ocp_version`
+
+No manual steps required — just set your `ocp_version` and the playbook handles the rest.
 
 ## Boot Order (VM or Bare Metal)
 
@@ -243,7 +263,8 @@ oc get clusterversion
 │   └── mirror-ca.crt                   # Mirror registry CA cert (git-ignored)
 ├── templates/
 │   ├── install-config.yaml.j2          # OpenShift install config template
-│   └── agent-config.yaml.j2            # Agent config template (NMState networking)
+│   ├── agent-config.yaml.j2            # Agent config template (NMState networking)
+│   └── 99-mirror-signature-policy.yaml.j2  # MachineConfig for mirror signature policy
 ├── vars/
 │   ├── cluster-config.example.yml      # Example configuration (committed)
 │   └── cluster-config.yml              # Your configuration (git-ignored)
@@ -279,6 +300,7 @@ sudo journalctl -u bootkube.service -f
 | "pull secret must contain auth for registry" | Pull secret missing mirror registry entry | Add auth entry (see [Pull Secret Configuration](#pull-secret-configuration)) |
 | Node reboots into ISO repeatedly | CDROM boot order takes priority over disk | Fix boot order to disk first (see [Boot Order](#boot-order-vm-or-bare-metal)) |
 | "Unable to read from the discovery media" | ISO was ejected during install | Keep ISO attached until install completes |
+| "A signature was required, but no signature exists" | OCP 4.22+ enforces sigstore verification; mirror lacks signatures | Playbook handles this automatically via MachineConfig — verify the `openshift/` directory manifest is present in the ISO build output |
 | "nmstatectl: executable file not found" | nmstate not installed on build host | `sudo dnf install -y nmstate` |
 | Bootstrap stuck "Waiting for kube-apiserver" | Normal — takes 10-15 min | Wait; check `sudo crictl ps \| wc -l` is growing |
 | API cert errors with saved kubeconfig | Kubeconfig from a previous ISO generation | Get fresh kubeconfig from the installed node |

@@ -28,7 +28,11 @@ pullSecret: '{{ pull_secret }}'
 sshKey: '{{ ssh_key }}'
 additionalTrustBundle: |
 {{ mirror_ca | indent(2, first=true) }}
+{% if ocp_version is version('4.14', '>=') %}
+imageDigestSources:
+{% else %}
 imageContentSources:
+{% endif %}
 {% for source in image_content_sources %}
 - mirrors:
 {% for mirror in source.mirrors %}
